@@ -1,6 +1,7 @@
-#include "groupmodel.hpp"
-#include "db.hpp"
 #include <vector>
+#include "groupmodel.hpp"
+#include "dbConnectionPool.hpp"
+
 
 // 创建群组
 bool GroupModel::createGroup(Group &group)
@@ -10,32 +11,57 @@ bool GroupModel::createGroup(Group &group)
     sprintf(sql, "insert into allgroup(groupname, groupdesc) values('%s', '%s')", group.getName().c_str(), group.getDesc().c_str());
 
     // 2.向allgroup表中插入记录
-    MySQL mysql;
-    if (mysql.connect())
+    shared_ptr<MySQL> mysql = ConnectionPool::getConnectionPool()->getConnection();
+
+    if (mysql->update(sql))
     {
-        if (mysql.update(sql))
-        {
-            // 插入成功则获取用户数据的id
-            group.setId(mysql_insert_id(mysql.getConnection()));
-            return true;
-        }
+        // 插入成功则获取用户数据的id
+        group.setId(mysql_insert_id(mysql->getConnection()));
+        return true;
     }
     return false;
 }
 
 // 加入群组
-void GroupModel::addGroup(int userid, int groupid, string role)
+bool GroupModel::addGroup(int userid, int groupid, string role)
 {
     // 1.组装sql语句
     char sql[1024] = {0};
     sprintf(sql, "insert into groupuser(groupid, userid, grouprole) values(%d, %d, '%s')", groupid, userid, role.c_str());
 
     // 2.向groupuser表中插入记录
-    MySQL mysql;
-    if (mysql.connect())
+    shared_ptr<MySQL> mysql = ConnectionPool::getConnectionPool()->getConnection();
+
+    if (mysql->update(sql))
+        return true;
+    else
+        return false;
+}
+
+// 根据id查询群组的信息
+Group GroupModel::query(int groupid)
+{
+    Group group;
+    // 1.组装sql语句
+    char sql[1024] = {0};
+    sprintf(sql, "select * from allgroup where id = %d", groupid);
+
+    // 2.向数据库中查询记录
+    shared_ptr<MySQL> mysql = ConnectionPool::getConnectionPool()->getConnection();
+    MYSQL_RES *res = mysql->query(sql);
+    if (res != nullptr)
     {
-        mysql.update(sql);
+        MYSQL_ROW row = mysql_fetch_row(res); // 获取一行的记录
+        if (row != nullptr)
+        {
+            group.setId(atoi(row[0]));
+            group.setName(row[1]);
+            group.setDesc(row[2]);
+            mysql_free_result(res); // 释放动态内存
+            return group;
+        }
     }
+    return group;
 }
 
 // 查询用户所在群组信息
@@ -51,35 +77,34 @@ vector<Group> GroupModel::queryGroups(int userid)
     sprintf(sql, "select a.id,a.groupname,a.groupdesc from allgroup a inner join groupuser b on a.id = b.groupid where b.userid = %d", userid);
 
     // 1.2 向allgroup表中查询group的信息
-    MySQL mysql;
-    if (mysql.connect())
+    shared_ptr<MySQL> mysql = ConnectionPool::getConnectionPool()->getConnection();
+
+    MYSQL_RES *res = mysql->query(sql);
+    MYSQL_ROW row;
+    while (res != nullptr)
     {
-        MYSQL_RES *res = mysql.query(sql);
-        MYSQL_ROW row;
-        while (res != nullptr)
+        // 获取userid所属的群组信息
+        row = mysql_fetch_row(res); // 获取一行的记录
+        if (row != nullptr)
         {
-            // 获取userid所属的群组信息
-            row = mysql_fetch_row(res); // 获取一行的记录
-            if (row != nullptr)
-            {
-                Group group;
-                group.setId(atoi(row[0]));
-                group.setName(row[1]);
-                group.setDesc(row[2]);
-                vec_Group.push_back(group);
-            }
-            else
-                break;
+            Group group;
+            group.setId(atoi(row[0]));
+            group.setName(row[1]);
+            group.setDesc(row[2]);
+            vec_Group.push_back(group);
         }
-        mysql_free_result(res); // 释放动态内存
+        else
+            break;
     }
+    mysql_free_result(res); // 释放动态内存
+
     // 2. 根据所属群组查询属于该群组的所有用户的userid，根据userid和user表进行联合查询，查出用户的详细信息
     // 完善group类中的user成员变量
     for (Group &group : vec_Group)
     {
         // 向user表中查询groupuser的信息
         sprintf(sql, "select a.id,a.name,a.state,b.grouprole from user a inner join groupuser b on a.id = b.userid where b.groupid = %d", group.getId());
-        MYSQL_RES *res = mysql.query(sql);
+        MYSQL_RES *res = mysql->query(sql);
         MYSQL_ROW row;
         while (res != nullptr)
         {
@@ -112,23 +137,22 @@ vector<int> GroupModel::queryGroupUsers(int userid, int groupid)
     char sql[1024] = {0};
     sprintf(sql, "select userid from groupuser where groupid = %d and userid != %d", groupid, userid);
 
-    MySQL mysql;
-    if (mysql.connect())
+    shared_ptr<MySQL> mysql = ConnectionPool::getConnectionPool()->getConnection();
+
+    MYSQL_RES *res = mysql->query(sql);
+    MYSQL_ROW row;
+    while (res != nullptr)
     {
-        MYSQL_RES *res = mysql.query(sql);
-        MYSQL_ROW row;
-        while (res != nullptr)
+        // 获取userid所属的群组下的groupuser信息
+        row = mysql_fetch_row(res); // 获取一行的记录
+        if (row != nullptr)
         {
-            // 获取userid所属的群组下的groupuser信息
-            row = mysql_fetch_row(res); // 获取一行的记录
-            if (row != nullptr)
-            {
-                vec.emplace_back(atoi(row[0]));
-            }
-            else
-                break;
+            vec.emplace_back(atoi(row[0]));
         }
-        mysql_free_result(res); // 释放动态内存
+        else
+            break;
     }
+    mysql_free_result(res); // 释放动态内存
+
     return vec;
 }

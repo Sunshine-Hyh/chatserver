@@ -10,7 +10,9 @@ set(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS} -g)
 # 设置可执行文件最终输出时候存储的路径：工程文件的根目录下的bin文件夹下
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
 
-# 配置头文件搜索路径
+# 配置头文件搜索路径:
+# PROJECT_SOURCE_DIR是CMake内置变量之一，它代表当前项目根目录的路径（CMakeLists.txt所在的路径）。
+# 如果你使用的是子目录CMakeLists.txt，那么PROJECT_SOURCE_DIR将会是子目录的路径。
 include_directories(${PROJECT_SOURCE_DIR}/include)
 include_directories(${PROJECT_SOURCE_DIR}/thirdparty)
 include_directories(${PROJECT_SOURCE_DIR}/include/server)

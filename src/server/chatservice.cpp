@@ -42,7 +42,7 @@ MsgHandler ChatService::getHandler(int msgid)
 {
     if (_msgHandlerMap.find(msgid) == _msgHandlerMap.end())
     {
-        // 记录错误日志，msgid没有对应的事件处理回调
+        // 找不到相关的回调函数，则返回一个默认的处理器(lambda匿名函数，仅仅用作提示)，该函数记录错误日志
         return [=](const TcpConnectionPtr &conn, json &js, Timestamp time)
         {
             // muduo已经封装好了相应的日志处理函数LOG_ERROR
@@ -93,9 +93,7 @@ void ChatService::ChatService::login(const TcpConnectionPtr &conn, json &js, Tim
             // 2. 更新用户的状态信息
             user.setState("online");
             if (_userModel.updateState(user))
-            {
                 LOG_INFO << "updateState successful!!";
-            }
             else
                 LOG_INFO << "updateState failed!!";
             json response;
@@ -128,7 +126,7 @@ void ChatService::ChatService::login(const TcpConnectionPtr &conn, json &js, Tim
                 response["friends"] = vec_friend;
             }
 
-            // 5. 查询用户的群组信息
+            // 5. 查询用户的群组信息：群id、群名、群描述、群成员
             vector<Group> vec_grouplist = _groupModel.queryGroups(id);
             if (!vec_grouplist.empty())
             {
@@ -214,7 +212,6 @@ void ChatService::reg(const TcpConnectionPtr &conn, json &js, Timestamp time)
     }
     else
     {
-        cout << "state is false" << endl;
         // 注册失败，向客户端发送相关的信息
         json response;
         response["msgid"] = REG_MSG_ACK;
@@ -262,7 +259,6 @@ void ChatService::reset()
 // 处理点对点聊天业务
 void ChatService::oneChat(const TcpConnectionPtr &conn, json &js, Timestamp time)
 {
-
     // 提取接收方的id
     int toid = js["toid"].get<int>();
     {
@@ -298,8 +294,26 @@ void ChatService::addFriend(const TcpConnectionPtr &conn, json &js, Timestamp ti
     // 如果要完善业务功能：验证要添加的好友是否存在
 
     // 添加好友信息
-    _friendModel.insert(userid, friendid);
-    _friendModel.insert(friendid, userid);
+    User user = _userModel.query(friendid);
+    if (user.getId() == -1)
+    {
+        json response;
+        response["msgid"] = ADD_FRIEND_MSG_ACK;
+        response["errno"] = 1;
+        response["errmsg"] = "this friendid does not exist, please input another!";
+        LOG_INFO << "Add friendid failed!!";
+        conn->send(response.dump());        
+    }
+    else
+    {
+        _friendModel.insert(userid, friendid);
+        _friendModel.insert(friendid, userid);
+        json response;
+        response["msgid"] = ADD_FRIEND_MSG_ACK;
+        response["errno"] = 0;
+        LOG_INFO << "Add friendid successful!!";
+        conn->send(response.dump());           
+    }
 }
 
 // 创建群组业务
@@ -313,8 +327,26 @@ void ChatService::createGroup(const TcpConnectionPtr &conn, json &js, Timestamp 
     Group group(-1, name, desc);
     if (_groupModel.createGroup(group))
     {
+        LOG_INFO << "Create group successful!!";
         // 存储群组创建人信息
         _groupModel.addGroup(userid, group.getId(), "creator");
+        
+        // 创建成功，向客户端发送相关的信息
+        json response;
+        response["msgid"] = CREATE_GROUP_MSG_ACK;
+        response["errno"] = 0;
+        response["groupid"] = group.getId();
+        conn->send(response.dump()); // response.dump()将json对象response序列化为字节流，通过send()将其发送给客户端        
+    }
+    else
+    {
+        LOG_INFO << "Create group failed!!";
+        // 创建失败，向客户端发送相关的信息
+        json response;
+        response["msgid"] = CREATE_GROUP_MSG_ACK;
+        response["errno"] = 1;
+        response["errmsg"] = "Create group failed!";
+        conn->send(response.dump()); // response.dump()将json对象response序列化为字节流，通过send()将其发送给客户端          
     }
 }
 
@@ -323,7 +355,45 @@ void ChatService::addGroup(const TcpConnectionPtr &conn, json &js, Timestamp tim
 {
     int userid = js["id"].get<int>();
     int groupid = js["groupid"].get<int>();
-    _groupModel.addGroup(userid, groupid, "normal");
+
+    // 验证该群是否存在
+    Group group = _groupModel.query(groupid);
+    if (group.getId() == -1)
+    {
+        // 加入群组失败
+        LOG_INFO << "Add Group failed!!";
+
+        json response;
+        response["msgid"] = ADD_GROUP_MSG_ACK;
+        response["errno"] = 1;
+        response["errmsg"] = "this group does not exist, please input another!";
+        conn->send(response.dump()); 
+        return;          
+    }
+
+    // 若群存在，尝试加群
+    if (_groupModel.addGroup(userid, groupid, "normal"))
+    {
+        // 加入群组成功
+        LOG_INFO << "Add Group successful!!";
+
+        json response;
+        response["msgid"] = ADD_GROUP_MSG_ACK;
+        response["errno"] = 0;
+        response["errmsg"] = "Add Group successful!";              
+        conn->send(response.dump());          
+    }
+    else
+    {
+        // 加入群组失败
+        LOG_INFO << "Add Group failed!!";
+
+        json response;
+        response["msgid"] = ADD_FRIEND_MSG_ACK;
+        response["errno"] = 1;
+        response["errmsg"] = "Add Group failed!";        
+        conn->send(response.dump());           
+    }
 }
 
 // 群组聊天业务

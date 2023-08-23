@@ -34,6 +34,9 @@ vector<User> g_currentUserFriendList;
 // 记录当前用户的群组列表信息
 vector<Group> g_currentUserGroupList;
 
+// 记录当前用户的离线列表信息
+vector<string> g_currentUserOfflineMessageList;
+
 // 用于读写线程之间的通信
 sem_t rwsem;
 
@@ -116,7 +119,7 @@ int main(int argc, char **argv)
         {
         case 1: // login业务
         {
-            // 服务端处理注册业务需要提供：id  password
+            // 服务端处理登录业务需要提供：id  password
             int id = 0;
             char pwd[50] = {0};
             cout << "userid:";
@@ -167,7 +170,7 @@ int main(int argc, char **argv)
             char name[50] = {0};
             char pwd[50] = {0};
             cout << "username:";
-            cin.getline(name, 50);
+            cin.getline(name, 50);  //cin >> 遇到空格回车等会停止读取，因此使用cin.getline()
             cout << "userpassword:";
             cin.getline(pwd, 50);
 
@@ -236,8 +239,6 @@ void doLoginResponse(json &responsejs)
                 g_currentUserFriendList.push_back(user);
             }
         }
-        else
-            cerr << "id: " << g_currentUser.getId() << "\rname: " << g_currentUser.getName() << "has no friend!" << endl;
 
         // 3. 记录当前用户的群组列表信息：vector<Group> g_currentUserGroupList;
         if (responsejs.contains("groups"))
@@ -267,32 +268,37 @@ void doLoginResponse(json &responsejs)
                 g_currentUserGroupList.push_back(group);
             }
         }
-        // 显示登录用户的基本信息
-        showCurrentUserData();
+
 
         // 4. 显示当前用户的离线消息： 个人聊天信息或者群组消息
         if (responsejs.contains("offlinemsg"))
         {
+            // 初始化
+            g_currentUserOfflineMessageList.clear();
             vector<string> vec_offlinemessage = responsejs["offlinemsg"];
             for (string str : vec_offlinemessage)
             {
-                json js = json::parse(str);
-                // time + [id] + name + " said " + xxx
-                if (ONE_CHAT_MSG == js["msgid"].get<int>())
-                {
-                    // 一对一离线聊天消息
-                    cout << "一对一消息: " << js["time"] << " [" << js["id"] << "]" << js["name"] << " said: " << js["msg"] << endl;
-                }
-                else
-                {
-                    cout << "群消息[" << js["groupid"] << "]: " << js["time"].get<string>() << " [" << js["id"] << "]" << js["name"].get<string>()
-                         << " said: " << js["msg"].get<string>() << endl;
-                }
+                g_currentUserOfflineMessageList.push_back(str);
             }
+            // for (string str : vec_offlinemessage)
+            // {
+            //     json js = json::parse(str);
+            //     // time + [id] + name + " said " + xxx
+            //     if (ONE_CHAT_MSG == js["msgid"].get<int>())
+            //     {
+            //         // 一对一离线聊天消息
+            //         cout << "一对一消息: " << js["time"] << " [" << js["id"] << "]" << js["name"] << " said: " << js["msg"] << endl;
+            //     }
+            //     else
+            //     {
+            //         cout << "群消息[" << js["groupid"] << "]: " << js["time"].get<string>() << " [" << js["id"] << "]" << js["name"].get<string>()
+            //              << " said: " << js["msg"].get<string>() << endl;
+            //     }
+            // }
         }
-        else
-            cerr << "name: " << g_currentUser.getName() << " has no offlinemessage!\n" << endl;
 
+        // 显示登录用户的基本信息
+        showCurrentUserData();
         g_isLoginSuccess = true;    // 登录成功
     }
 }
@@ -308,9 +314,53 @@ void doRegResponse(json &responsejs)
     else
     {
         // 注册成功
-        cerr << "register success, userid is " << responsejs["id"] << ", do not forget it!" << endl;
+        cout << "register successful, userid is " << responsejs["id"] << ", do not forget it!" << endl;
+    }    
+}
+
+void doAddFriendResponse(json &responsejs)
+{
+    // 接收服务端发送过来的数据
+    if (0 != responsejs["errno"].get<int>())
+    {
+        // 添加好友失败
+        cerr << responsejs["errmsg"] << endl;
     }
-    
+    else
+    {
+        // 添加好友成功
+        cout << "Add friendid successful!" << endl;
+    }    
+}
+
+void doCreateGroupResponse(json &responsejs)
+{
+    // 接收服务端发送过来的数据
+    if (0 != responsejs["errno"].get<int>())
+    {
+        // 创建群组失败
+        cerr << responsejs["errmsg"] << endl;
+    }
+    else
+    {
+        // 创建群组成功
+        cout << "Create group successful!\tGroupID : " << responsejs["groupid"] << endl;
+    }    
+}
+
+void doAddGroupResponse(json &responsejs)
+{
+    // 接收服务端发送过来的数据
+    if (0 != responsejs["errno"].get<int>())
+    {
+        // 加入群组失败
+        cerr << responsejs["errmsg"] << endl;
+    }
+    else
+    {
+        // 加入群组成功
+        cout << "Add Group successful!" << endl;
+    }    
 }
 
 // 子线程 - 接收线程函数：接收线程(接收服务器发过来的数据)
@@ -327,7 +377,7 @@ void readTaskHandler(int clientfd)
             exit(-1);
         }
 
-        // 一对一聊天：接收ChatServer转发的数据，发序列化成json对象
+        // 一对一聊天：接收ChatServer转发的数据，反序列化成json对象
         json js = json::parse(buffer);
         int msgtype = js["msgid"].get<int>();
         if (msgtype == ONE_CHAT_MSG)
@@ -356,6 +406,24 @@ void readTaskHandler(int clientfd)
             sem_post(&rwsem);   // 通知主线程，注册结果处理完成
             continue;          
         }
+        else if (msgtype == ADD_FRIEND_MSG_ACK)
+        {
+            // 处理添加好友响应的业务逻辑
+            doAddFriendResponse(js);
+            continue;          
+        }  
+        else if (msgtype == CREATE_GROUP_MSG_ACK)
+        {
+            // 处理创建群组响应的业务逻辑
+            doCreateGroupResponse(js);
+            continue;          
+        }   
+        else if (msgtype == ADD_GROUP_MSG_ACK)
+        {
+            // 处理加入群组响应的业务逻辑
+            doAddGroupResponse(js);
+            continue;          
+        }                      
     }
 }
 
@@ -373,8 +441,11 @@ void showCurrentUserData()
             cout << user.getId() << " " << user.getName() << " " << user.getState() << endl;
         }
     }
+    else
+        cout << "Your FriendList is empty!\n" << endl;
 
-    cout << "----------------------------group list---------------------------" << endl;
+
+    cout << "----------------------------group list----------------------------" << endl;
     if (!g_currentUserGroupList.empty())
     {
         for (Group group : g_currentUserGroupList)
@@ -386,7 +457,30 @@ void showCurrentUserData()
             }
         }
     }
+    else 
+        cout << "Your GroupList is empty!\n" << endl;    
     cout << "============================offlinemsg============================" << endl;
+    if (!g_currentUserOfflineMessageList.empty())
+    {
+        for (string str : g_currentUserOfflineMessageList)
+        {
+            json js = json::parse(str);
+            // time + [id] + name + " said " + xxx
+            if (ONE_CHAT_MSG == js["msgid"].get<int>())
+            {
+                // 一对一离线聊天消息
+                cout << "一对一消息: " << js["time"] << " [" << js["id"] << "]" << js["name"] << " said: " << js["msg"] << endl;
+            }
+            else
+            {
+                cout << "群消息[" << js["groupid"] << "]: " << js["time"].get<string>() << " [" << js["id"] << "]" << js["name"].get<string>()
+                        << " said: " << js["msg"].get<string>() << endl;
+            }
+        }
+    }   
+    else
+        cout << "Your OfflinemessageList is empty!\n" << endl;  
+    cout << "=======================================================================" << endl;           
 }
 
 // "help"command handler
@@ -479,7 +573,7 @@ void help(int fd, string str)
 // "chat"command handler
 void chat(int clientfd, string str)
 {
-    // "一对一聊天, 格式chat:friendid:message"
+    // "一对一聊天, 格式chat:friendid:message"  这里str = "friendid:message"
     int idx = str.find(":");
     if (idx == -1)
     {
@@ -509,6 +603,7 @@ void chat(int clientfd, string str)
 // "addfriend"command handler
 void addfriend(int clientfd, string str)
 {
+    // 添加好友格式：addfriend:friendid str = "friendid"
     int friendid = stoi(str);
     json js;
     js["msgid"] = ADD_FRIEND_MSG;
