@@ -1,7 +1,6 @@
 #ifndef OFFLINEMESSAGEMODEL_H
 #define OFFLINEMESSAGEMODEL_H
 
-#include "db.hpp"
 #include <vector>
 #include <string>
 
